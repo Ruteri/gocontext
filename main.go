@@ -136,7 +136,7 @@ func main() {
 
 	// Extract documentation for each package
 	for _, pkg := range packages {
-		if err := extractDocumentation(pkg, absOutputPath, absProjectPath, isGitRepo, *verboseFlag); err != nil && *verboseFlag {
+		if err := extractDocumentation(moduleName, pkg, absOutputPath, absProjectPath, isGitRepo, *verboseFlag); err != nil && *verboseFlag {
 			fmt.Printf("Warning: Error extracting documentation for %s: %v\n", pkg, err)
 		}
 	}
@@ -456,7 +456,7 @@ func needsDocUpdate(pkg, outputPath, projectPath string, isGitRepo bool) (bool, 
 }
 
 // extractDocumentation runs go doc -all for a package and saves the output if needed
-func extractDocumentation(pkg, outputPath string, projectPath string, isGitRepo bool, verbose bool) error {
+func extractDocumentation(moduleName, pkg, outputPath string, projectPath string, isGitRepo bool, verbose bool) error {
 	// Check if documentation needs to be updated
 	needsUpdate, err := needsDocUpdate(pkg, outputPath, projectPath, isGitRepo)
 	if err != nil {
@@ -475,7 +475,7 @@ func extractDocumentation(pkg, outputPath string, projectPath string, isGitRepo 
 	}
 
 	// Run go doc -all with the appropriate package path
-	cmd := exec.Command("go", "doc", "-short", "-all", pkg)
+	cmd := exec.Command("go", "doc", "-short", "-all", pkg[len(moduleName)+1:])
 	cmd.Dir = projectPath
 	output, err := cmd.Output()
 	if err != nil {
