@@ -1,6 +1,7 @@
 # GoContext
 
-A utility tool to prepare Golang project context for AI conversations.
+A utility tool to prepare Golang project context for AI conversations.  
+This tool is AI-generated, use at your own risk.
 
 ## Overview
 
@@ -18,6 +19,7 @@ GoContext is a command-line tool that creates organized context from your Golang
 - Uses symlinks to maintain references to original files
 - Uses a flat structure with prefixed filenames for easy upload
 - By default, stores context in `~/.gocontext/<module-name>` for easy reuse
+- Generates a comprehensive directory structure of the project
 
 ## Installation
 
@@ -61,6 +63,7 @@ After running the tool, your sync directory will have a flat structure with pref
 ├── src_cmd_app_main.go
 ├── src_cmd_app_config.go
 ├── src_pkg_models_user.go
+├── directory_structure.txt
 └── ... (all files with appropriate prefixes)
 ```
 
@@ -115,7 +118,7 @@ The tool automatically includes files with the following extensions:
    # From your project directory
    cd ~/projects/mygoproject
    
-   # Include specific packages and directories
+   # Include specific packages and directories and generate directory structure
    gocontext -include="cmd,internal/auth,github.com/me/myproject/models"
    ```
 

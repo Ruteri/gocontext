@@ -173,6 +173,11 @@ func main() {
 		}
 	}
 
+	if err := generateDirectoryStructure(absProjectPath, absOutputPath, excludeDirsList, isGitRepo, *verboseFlag); err != nil {
+		fmt.Printf("Error generating directory structure: %v\n", err)
+		os.Exit(1)
+	}
+
 	fmt.Printf("Context synced successfully to: %s\n", absOutputPath)
 }
 
@@ -677,4 +682,56 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 	}
 
 	return err
+}
+
+// generateDirectoryStructure creates a text file with the project's directory structure using tree command
+func generateDirectoryStructure(projectPath, outputPath string, excludeDirs []string, isGitRepo, verbose bool) error {
+	structureFile := filepath.Join(outputPath, "directory_structure.txt")
+
+	if verbose {
+		fmt.Println("Generating directory structure...")
+	}
+
+	// Check if tree command is available
+	treeCmd := exec.Command("tree", "--version")
+	err := treeCmd.Run()
+	if err != nil {
+		return fmt.Errorf("tree command not found. Please install tree utility to use this feature: %v", err)
+	}
+
+	// Prepare exclude patterns for tree command
+	excludePatterns := []string{}
+
+	// Add exclude directory patterns
+	for _, excludeDir := range excludeDirs {
+		excludePatterns = append(excludePatterns, "-I", excludeDir)
+	}
+
+	// Add output directory to exclude patterns if it's within the project
+	relOutputPath, err := filepath.Rel(projectPath, outputPath)
+	if err == nil && !strings.HasPrefix(relOutputPath, "..") {
+		excludePatterns = append(excludePatterns, "-I", filepath.Base(outputPath))
+	}
+
+	// Add gitignore patterns if in a git repo
+	treeOptions := []string{"--dirsfirst", "--noreport", "-o", structureFile}
+	if isGitRepo {
+		treeOptions = append(treeOptions, "--gitignore")
+	}
+
+	// Create command with all options
+	args := append(treeOptions, excludePatterns...)
+	cmd := exec.Command("tree", args...)
+	cmd.Dir = projectPath
+
+	// Execute command
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("error running tree command: %v", err)
+	}
+
+	if verbose {
+		fmt.Println("Generated directory structure")
+	}
+
+	return nil
 }
