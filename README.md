@@ -11,8 +11,9 @@ GoContext is a command-line tool that creates organized context from your Golang
 - Creates a dedicated "sync directory" containing all context files
 - Uses `go list ./...` to discover packages in your project
 - Extracts concise package documentation using `go doc -short -all`
+- Intelligently skips documentation generation when files haven't changed
 - Includes all README.md files from your project
-- Flexible filtering - include/exclude both directories and packages
+- Smart inclusion/exclusion with automatic detection of directories vs. packages
 - Respects Git's `.gitignore` patterns when running in a Git repository
 - Uses symlinks to maintain references to original files
 - Uses a flat structure with prefixed filenames for easy upload
@@ -31,26 +32,20 @@ go install github.com/ruteri/gocontext@latest
 cd /path/to/your/golang/project
 gocontext
 
-# Include source code from specific directories
-gocontext -include-dirs="cmd,internal/auth,pkg/models"
+# Include source code from specific directories or packages
+gocontext -include="cmd,internal/auth,github.com/yourusername/project/pkg/models"
 
-# Include source code from specific packages
-gocontext -include-pkgs="github.com/yourusername/project/cmd,github.com/yourusername/project/pkg/models"
-
-# Mix of directory and package-based inclusion
-gocontext -include-dirs="cmd" -include-pkgs="github.com/yourusername/project/pkg/models"
-
-# Exclude packages from documentation
-gocontext -exclude-pkgs="github.com/yourusername/project/internal/testdata"
-
-# Exclude directories
-gocontext -exclude-dirs="test,examples"
+# Exclude directories or packages
+gocontext -exclude="test,examples,github.com/yourusername/project/internal/testdata"
 
 # Specify a custom output directory
 gocontext -output="./my-context-dir"
 
 # Enable verbose output
 gocontext -verbose
+
+# Clean existing sync directory before creating a new one
+gocontext -clean
 ```
 
 ## Directory Structure
@@ -72,21 +67,17 @@ After running the tool, your sync directory will have a flat structure with pref
 ## Usage Options
 
 ```
-Usage: goontext [options]
+Usage: gocontext [options]
 
 Options:
   -project string
         Path to the Go project (default: current directory)
   -output string
         Path where the sync directory will be created (default: ~/.gocontext/<module-name>)
-  -include-dirs string
-        Comma-separated list of directories to include source code from
-  -exclude-dirs string
-        Comma-separated list of directories to exclude entirely
-  -include-pkgs string
-        Comma-separated list of Go packages to include source code from
-  -exclude-pkgs string
-        Comma-separated list of Go packages to exclude
+  -include string
+        Comma-separated list of directories or packages to include source code from
+  -exclude string
+        Comma-separated list of directories or packages to exclude
   -clean
         Remove existing sync directory before creating a new one
   -verbose
@@ -96,9 +87,18 @@ Options:
 The tool uses several mechanisms to determine what files to include:
 
 1. **Package discovery**: Uses `go list ./...` to find all packages in the project
-2. **Package filtering**: Applies `-include-pkgs` and `-exclude-pkgs` to filter packages
-3. **Directory filtering**: Automatically converts excluded directories to package exclusions
+2. **Smart filtering**: Automatically detects if an item is a package or directory based on its format
+3. **Path-based exclusion**: Excludes any packages that match the excluded paths
 4. **Git integration**: Respects `.gitignore` patterns in Git repositories
+
+## Intelligent Documentation Generation
+
+The tool intelligently determines when documentation needs to be regenerated:
+
+- Always generates documentation if it doesn't exist yet
+- In Git repositories, checks for uncommitted changes
+- Compares the documentation file timestamp with the latest Git commit timestamp
+- Only runs `go doc` when necessary, saving time for large projects
 
 ## File Types
 
@@ -116,7 +116,7 @@ The tool automatically includes files with the following extensions:
    cd ~/projects/mygoproject
    
    # Include specific packages and directories
-   goontext -include-pkgs="github.com/me/myproject/models" -include-dirs="cmd,internal/auth"
+   gocontext -include="cmd,internal/auth,github.com/me/myproject/models"
    ```
 
 2. Upload the contents of the context directory:

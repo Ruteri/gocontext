@@ -8,17 +8,17 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
 	// Parse command line arguments
 	projectPath := flag.String("project", "", "Path to the Go project (default: current directory)")
 	outputPath := flag.String("output", "", "Path for the sync directory (default: ~/.gocontext/<module-name>)")
-	includeDirs := flag.String("include-dirs", "", "Comma-separated list of directories to include source code from")
-	excludeDirs := flag.String("exclude-dirs", "", "Comma-separated list of directories to exclude entirely")
-	includePackages := flag.String("include-pkgs", "", "Comma-separated list of Go packages to include source code from")
-	excludePackages := flag.String("exclude-pkgs", "", "Comma-separated list of Go packages to exclude")
+	includeFlag := flag.String("include", "", "Comma-separated list of directories or packages to include source code from")
+	excludeFlag := flag.String("exclude", "", "Comma-separated list of directories or packages to exclude")
 	cleanFlag := flag.Bool("clean", false, "Remove existing sync directory before creating a new one")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging")
 	flag.Parse()
@@ -89,10 +89,19 @@ func main() {
 	}
 
 	// Parse filter lists
-	includeDirsList := splitAndTrim(*includeDirs, ",")
-	excludeDirsList := splitAndTrim(*excludeDirs, ",")
-	includePkgsList := splitAndTrim(*includePackages, ",")
-	excludePkgsList := splitAndTrim(*excludePackages, ",")
+	includeList := splitAndTrim(*includeFlag, ",")
+	excludeList := splitAndTrim(*excludeFlag, ",")
+
+	// Categorize includes and excludes based on whether they are packages or directories
+	includeDirsList, includePkgsList := categorizeIncludesExcludes(includeList, moduleName)
+	excludeDirsList, excludePkgsList := categorizeIncludesExcludes(excludeList, moduleName)
+
+	if *verboseFlag {
+		fmt.Printf("Include directories: %v\n", includeDirsList)
+		fmt.Printf("Include packages: %v\n", includePkgsList)
+		fmt.Printf("Exclude directories: %v\n", excludeDirsList)
+		fmt.Printf("Exclude packages: %v\n", excludePkgsList)
+	}
 
 	// Check if the project is a git repository
 	isGitRepo := isGitRepository(absProjectPath)
@@ -117,11 +126,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	for _, dir := range excludeDirsList {
-		excludePkgsList = append(excludePkgsList, path.Join(moduleName, dir))
-	}
+	// Directory exclusions are already handled by categorizeIncludesExcludes
 
-	packages := filterPackages(allPackages, includePkgsList, excludePkgsList)
+	packages := filterPackages(allPackages, excludeDirsList, excludePkgsList, moduleName)
 
 	if *verboseFlag {
 		fmt.Printf("Discovered %d packages, using %d after filtering\n", len(allPackages), len(packages))
@@ -129,7 +136,7 @@ func main() {
 
 	// Extract documentation for each package
 	for _, pkg := range packages {
-		if err := extractDocumentation(pkg, absOutputPath, absProjectPath, *verboseFlag); err != nil && *verboseFlag {
+		if err := extractDocumentation(pkg, absOutputPath, absProjectPath, isGitRepo, *verboseFlag); err != nil && *verboseFlag {
 			fmt.Printf("Warning: Error extracting documentation for %s: %v\n", pkg, err)
 		}
 	}
@@ -143,21 +150,9 @@ func main() {
 	// Process directories and packages for source files
 	processedDirs := make(map[string]bool)
 
-	// Convert relative directory paths to absolute
-	for i, dir := range includeDirsList {
-		if !filepath.IsAbs(dir) {
-			includeDirsList[i] = filepath.Join(absProjectPath, dir)
-		}
-	}
-
 	// Process included directories
 	for _, dir := range includeDirsList {
-		if _, processed := processedDirs[dir]; !processed {
-			if err := symlinkDirectoryFiles(dir, absProjectPath, absOutputPath, isGitRepo, *verboseFlag); err != nil && *verboseFlag {
-				fmt.Printf("Warning: Error symlinking files from directory %s: %v\n", dir, err)
-			}
-			processedDirs[dir] = true
-		}
+		includePkgsList = append(includePkgsList, path.Join(moduleName, dir))
 	}
 
 	// Process included packages
@@ -198,6 +193,20 @@ func splitAndTrim(s string, sep string) []string {
 	}
 
 	return result
+}
+
+// categorizeIncludesExcludes separates paths into directories and packages based on module name
+func categorizeIncludesExcludes(items []string, moduleName string) (dirs []string, pkgs []string) {
+	for _, item := range items {
+		// If the item starts with the module name, it's a package
+		if strings.HasPrefix(item, moduleName+"/") || item == moduleName {
+			pkgs = append(pkgs, item)
+		} else {
+			// Otherwise it's a directory
+			dirs = append(dirs, item)
+		}
+	}
+	return dirs, pkgs
 }
 
 // isGoProject checks if a directory is a Go project
@@ -319,17 +328,21 @@ func discoverPackages(projectPath string) ([]string, error) {
 }
 
 // filterPackages filters a list of packages based on inclusion/exclusion lists
-func filterPackages(packages, includeList, excludeList []string) []string {
+func filterPackages(packages, excludeDirs, excludePkgs []string, moduleName string) []string {
 	// If no includes or excludes specified, return all packages
-	if len(includeList) == 0 && len(excludeList) == 0 {
+	if len(excludeDirs) == 0 && len(excludePkgs) == 0 {
 		return packages
+	}
+
+	for _, excl := range excludeDirs {
+		excludePkgs = append(excludePkgs, path.Join(moduleName, excl))
 	}
 
 	var filtered []string
 
 	for _, pkg := range packages {
 		excluded := false
-		for _, excl := range excludeList {
+		for _, excl := range excludePkgs {
 			if strings.HasPrefix(pkg, excl) {
 				excluded = true
 			}
@@ -355,8 +368,112 @@ func getPackageDir(pkg string, projectPath string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// extractDocumentation runs go doc -all for a package and saves the output
-func extractDocumentation(pkg, outputPath string, projectPath string, verbose bool) error {
+// hasDocFile checks if a package directory contains a doc.go file
+func hasDocFile(pkg string, projectPath string) (bool, error) {
+	// Get the package directory
+	pkgDir, err := getPackageDir(pkg, projectPath)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if doc.go exists in the package directory
+	docFilePath := filepath.Join(pkgDir, "doc.go")
+	_, err = os.Stat(docFilePath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// needsDocUpdate checks if the documentation for a package needs to be updated
+func needsDocUpdate(pkg, outputPath, projectPath string, isGitRepo bool) (bool, error) {
+	// First, check if doc.go exists in the package directory
+	hasDoc, err := hasDocFile(pkg, projectPath)
+	if err != nil {
+		return false, err
+	}
+
+	// Skip documentation generation if doc.go doesn't exist
+	if !hasDoc {
+		return false, nil
+	}
+
+	// Check if the documentation file already exists
+	docFile := filepath.Join(outputPath, "doc_"+strings.Replace(pkg, "/", "_", -1)+".txt")
+	docFileInfo, err := os.Stat(docFile)
+	if os.IsNotExist(err) {
+		// Doc file doesn't exist, so it needs to be created
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	// If not a git repository, always update
+	if !isGitRepo {
+		return true, nil
+	}
+
+	// Get the package directory
+	pkgDir, err := getPackageDir(pkg, projectPath)
+	if err != nil {
+		return false, err
+	}
+
+	// Check for uncommitted changes
+	cmd := exec.Command("git", "status", "--porcelain", pkgDir)
+	cmd.Dir = projectPath
+	output, err := cmd.Output()
+	if err == nil && len(output) > 0 {
+		// There are uncommitted changes
+		return true, nil
+	}
+
+	// Get the last modified time of the package in git
+	cmd = exec.Command("git", "log", "-1", "--format=%at", "--", pkgDir)
+	cmd.Dir = projectPath
+	output, err = cmd.Output()
+	if err != nil || len(output) == 0 {
+		// If there's an error or no output, fall back to always updating
+		return true, nil
+	}
+
+	// Parse the timestamp
+	timestamp, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+	if err != nil {
+		return true, nil
+	}
+
+	// Convert the timestamp to time.Time
+	lastModifiedTime := time.Unix(timestamp, 0)
+
+	// Compare the timestamp of the doc file with the timestamp of the latest commit
+	return docFileInfo.ModTime().Before(lastModifiedTime), nil
+}
+
+// extractDocumentation runs go doc -all for a package and saves the output if needed
+func extractDocumentation(pkg, outputPath string, projectPath string, isGitRepo bool, verbose bool) error {
+	// Check if documentation needs to be updated
+	needsUpdate, err := needsDocUpdate(pkg, outputPath, projectPath, isGitRepo)
+	if err != nil {
+		return err
+	}
+
+	if !needsUpdate {
+		// Check if it's because doc.go doesn't exist
+		hasDoc, err := hasDocFile(pkg, projectPath)
+		if err == nil && !hasDoc && verbose {
+			fmt.Printf("Skipping documentation for %s: no doc.go file found\n", pkg)
+		} else if verbose {
+			fmt.Printf("Documentation for %s is up-to-date, skipping\n", pkg)
+		}
+		return nil
+	}
+
 	// Run go doc -all with the appropriate package path
 	cmd := exec.Command("go", "doc", "-short", "-all", pkg)
 	cmd.Dir = projectPath
@@ -440,6 +557,16 @@ func findAndSymlinkReadmes(projectPath, syncPath string, excludeDirs []string, i
 			}
 			symlinkName := "readme_" + strings.Replace(relPath, "/", "_", -1)
 			symlinkPath := filepath.Join(syncPath, symlinkName)
+
+			// Remove any existing symlink regardless of -clean flag
+			if _, err := os.Lstat(symlinkPath); err == nil {
+				if err := os.Remove(symlinkPath); err != nil {
+					return fmt.Errorf("failed to remove existing symlink %s: %v", symlinkPath, err)
+				}
+				if verbose {
+					fmt.Printf("Removed existing symlink: %s\n", symlinkPath)
+				}
+			}
 
 			// Create symlink
 			if err := os.Symlink(path, symlinkPath); err != nil {
@@ -525,6 +652,16 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 			if extensions[ext] {
 				filename := info.Name()
 				symlinkPath := filepath.Join(syncPath, dirPrefix+filename)
+
+				// Remove any existing symlink regardless of -clean flag
+				if _, err := os.Lstat(symlinkPath); err == nil {
+					if err := os.Remove(symlinkPath); err != nil {
+						return fmt.Errorf("failed to remove existing symlink %s: %v", symlinkPath, err)
+					}
+					if verbose {
+						fmt.Printf("Removed existing symlink: %s\n", symlinkPath)
+					}
+				}
 
 				// Create symlink
 				if err := os.Symlink(path, symlinkPath); err != nil {
