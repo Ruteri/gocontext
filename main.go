@@ -365,7 +365,7 @@ func extractDocumentation(pkg, outputPath string, projectPath string, verbose bo
 		return err
 	}
 
-	if len(output) == 0 {
+	if len(output) <= 1 {
 		return errors.New("doc is empty")
 	}
 
