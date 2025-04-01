@@ -355,8 +355,13 @@ func filterPackages(packages, excludeDirs, excludePkgs []string, moduleName stri
 	return filtered
 }
 
+var pkgCache map[string]string = make(map[string]string)
+
 // getPackageDir gets the directory for a Go package
 func getPackageDir(pkg string, projectPath string) (string, error) {
+	if cachedPath, ok := pkgCache[pkg]; ok {
+		return cachedPath, nil
+	}
 	// Run go list to get the package directory
 	cmd := exec.Command("go", "list", "-f", "{{.Dir}}", pkg)
 	cmd.Dir = projectPath
@@ -365,7 +370,9 @@ func getPackageDir(pkg string, projectPath string) (string, error) {
 		return "", err
 	}
 
-	return strings.TrimSpace(string(output)), nil
+	pkgPath := strings.TrimSpace(string(output))
+	pkgCache[pkg] = pkgPath
+	return pkgPath, nil
 }
 
 // hasDocFile checks if a package directory contains a doc.go file
@@ -504,7 +511,6 @@ func extractDocumentation(moduleName, pkg, outputPath string, projectPath string
 // findAndSymlinkReadmes finds all README.md files and symlinks them
 func findAndSymlinkReadmes(projectPath, syncPath string, excludeDirs []string, isGitRepo bool, verbose bool) error {
 	// Walk through project directory
-	count := 0
 	err := filepath.Walk(projectPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -558,14 +564,12 @@ func findAndSymlinkReadmes(projectPath, syncPath string, excludeDirs []string, i
 			symlinkName := "readme_" + strings.Replace(relPath, "/", "_", -1)
 			symlinkPath := filepath.Join(syncPath, symlinkName)
 
-			// Remove any existing symlink regardless of -clean flag
+			// Ignore existing symlinks
 			if _, err := os.Lstat(symlinkPath); err == nil {
-				if err := os.Remove(symlinkPath); err != nil {
-					return fmt.Errorf("failed to remove existing symlink %s: %v", symlinkPath, err)
-				}
 				if verbose {
-					fmt.Printf("Removed existing symlink: %s\n", symlinkPath)
+					fmt.Printf("Ignoring already symlinked README: %s\n", relPath)
 				}
+				return nil
 			}
 
 			// Create symlink
@@ -573,7 +577,6 @@ func findAndSymlinkReadmes(projectPath, syncPath string, excludeDirs []string, i
 				return err
 			}
 
-			count++
 			if verbose {
 				fmt.Printf("Symlinked README: %s\n", relPath)
 			}
@@ -581,10 +584,6 @@ func findAndSymlinkReadmes(projectPath, syncPath string, excludeDirs []string, i
 
 		return nil
 	})
-
-	if verbose {
-		fmt.Printf("Symlinked %d README files\n", count)
-	}
 
 	return err
 }
@@ -619,7 +618,6 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 	}
 
 	// Walk through the directory and symlink files
-	count := 0
 	err = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -655,11 +653,8 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 
 				// Remove any existing symlink regardless of -clean flag
 				if _, err := os.Lstat(symlinkPath); err == nil {
-					if err := os.Remove(symlinkPath); err != nil {
-						return fmt.Errorf("failed to remove existing symlink %s: %v", symlinkPath, err)
-					}
 					if verbose {
-						fmt.Printf("Removed existing symlink: %s\n", symlinkPath)
+						fmt.Printf("Ignoring already symlinked file: %s\n", path)
 					}
 				}
 
@@ -668,7 +663,6 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 					return err
 				}
 
-				count++
 				if verbose {
 					fmt.Printf("Symlinked file: %s\n", path)
 				}
@@ -679,7 +673,7 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 	})
 
 	if verbose {
-		fmt.Printf("Symlinked %d files from directory %s\n", count, dirPath)
+		fmt.Printf("Symlinked from directory %s\n", dirPath)
 	}
 
 	return err
