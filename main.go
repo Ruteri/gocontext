@@ -498,8 +498,8 @@ func extractDocumentation(moduleName, pkg, outputPath string, projectPath string
 		return errors.New("doc is empty")
 	}
 
-	// Create filename with doc_ prefix - use the full package path for uniqueness
-	docFile := filepath.Join(outputPath, "doc_"+strings.Replace(pkg, "/", "_", -1)+".txt")
+	// Create filename with doc_ prefix - use the relative package path for uniqueness
+	docFile := filepath.Join(outputPath, "doc_"+strings.Replace(strings.TrimPrefix(pkg, moduleName+"/"), "/", "_", -1)+".txt")
 
 	// Write output to file
 	if err := os.WriteFile(docFile, output, 0644); err != nil {
