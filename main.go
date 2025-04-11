@@ -487,7 +487,7 @@ func extractDocumentation(moduleName, pkg, outputPath string, projectPath string
 	}
 
 	// Run go doc -all with the appropriate package path
-	cmd := exec.Command("go", "doc", "-short", "-all", pkg[len(moduleName)+1:])
+	cmd := exec.Command("go", "doc", "-short", "-all", "./"+pkg[len(moduleName)+1:])
 	cmd.Dir = projectPath
 	output, err := cmd.Output()
 	if err != nil {
