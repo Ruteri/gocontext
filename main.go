@@ -605,15 +605,6 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 		return fmt.Errorf("%s is not a directory", dirPath)
 	}
 
-	// Get relative path for directory naming
-	relDir, err := filepath.Rel(projectPath, dirPath)
-	if err != nil {
-		// If we can't get a relative path, use the directory name
-		relDir = filepath.Base(dirPath)
-	}
-
-	dirPrefix := "src_" + strings.Replace(relDir, string(os.PathSeparator), "_", -1) + "_"
-
 	// File extensions to include
 	extensions := map[string]bool{
 		".go":    true,
@@ -628,16 +619,15 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 			return err
 		}
 
-		// Skip subdirectories
-		if info.IsDir() && path != dirPath {
+		// Skip directories themselves (but still walk into them)
+		if info.IsDir() {
 			return nil
 		}
 
 		// Check if the file is ignored by git
-		if isGitRepo && !info.IsDir() {
+		if isGitRepo {
 			ignored, err := isIgnoredByGit(path, projectPath)
 			if err != nil {
-				// If there's an error checking git ignore status, just continue
 				if verbose {
 					fmt.Printf("Warning: Error checking git ignore status for %s: %v\n", path, err)
 				}
@@ -650,27 +640,33 @@ func symlinkDirectoryFiles(dirPath, projectPath, syncPath string, isGitRepo bool
 		}
 
 		// Check if it's a source file with an allowed extension
-		if !info.IsDir() {
-			ext := filepath.Ext(info.Name())
-			if extensions[ext] {
-				filename := info.Name()
-				symlinkPath := filepath.Join(syncPath, dirPrefix+filename)
+		ext := filepath.Ext(info.Name())
+		if extensions[ext] {
+			// Use full relative path from project root to ensure uniqueness
+			relPath, err := filepath.Rel(projectPath, path)
+			if err != nil {
+				return err
+			}
 
-				// Remove any existing symlink regardless of -clean flag
-				if _, err := os.Lstat(symlinkPath); err == nil {
-					if verbose {
-						fmt.Printf("Ignoring already symlinked file: %s\n", path)
-					}
-				}
+			// Create symlink name using full relative path
+			safeRelPath := strings.Replace(relPath, string(os.PathSeparator), "_", -1)
+			symlinkPath := filepath.Join(syncPath, "src_"+safeRelPath)
 
-				// Create symlink
-				if err := os.Symlink(path, symlinkPath); err != nil {
-					return err
-				}
-
+			// Skip if symlink already exists
+			if _, err := os.Lstat(symlinkPath); err == nil {
 				if verbose {
-					fmt.Printf("Symlinked file: %s\n", path)
+					fmt.Printf("Ignoring already symlinked file: %s\n", path)
 				}
+				return nil
+			}
+
+			// Create symlink
+			if err := os.Symlink(path, symlinkPath); err != nil {
+				return err
+			}
+
+			if verbose {
+				fmt.Printf("Symlinked file: %s\n", path)
 			}
 		}
 
