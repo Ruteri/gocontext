@@ -1,3 +1,7 @@
+# Archived!
+
+Thankfully claude code solves this nowadays (for the most part anyway). Archiving.
+
 # GoContext
 
 A utility tool to prepare Golang project context for AI conversations.  
